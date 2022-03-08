@@ -2,6 +2,7 @@ import math
 import os
 import sys
 import random
+from unittest.mock import patch
 import numpy as np
 import copy
 from enum import Enum
@@ -37,6 +38,7 @@ def calPSumAllReduce(output_num, chiplet_num, PC3 ):
 
 
 def calFitness(for_list, act_wgt_dict, out_dict, parallel_dim_list, partition_list, network_param, HW_param, memory_param, NoC_param, if_multicast, flag = "ours"):
+    #params need to be changed: partition_list, network_param, OL1_ratio, WL1_ratio
     route_table = NoC_param["route_table"]
     bw_scales = NoC_param["bw_scales"]
     F = NoC_param["F"]
@@ -75,6 +77,10 @@ def calFitness(for_list, act_wgt_dict, out_dict, parallel_dim_list, partition_li
     PP3,PQ3,PC3,PK3 = parallel_dim_list[1][0],parallel_dim_list[1][1],parallel_dim_list[1][2],parallel_dim_list[1][3]
     PK0 = HW_param["intra_PE"]["K"]
     PC0 = HW_param["intra_PE"]["C"]
+    # to support transformer
+    # LA1,LA2,LA3 = partition_list["LA"][0],partition_list["LA"][1],partition_list["LA"][2]
+    # PLA2,PLA3 = partition_list["LA"][0],partition_list["LA"][1],partition_list["LA"][2] #there isn't PLA1,because parallel_dim on mac_level is fixed on C and K
+
 
     # network parameter
     P = network_param["P"]
@@ -83,6 +89,7 @@ def calFitness(for_list, act_wgt_dict, out_dict, parallel_dim_list, partition_li
     C = network_param["C"]
     R = network_param["R"]
     S = network_param["S"]
+    # LA = network_param["LA"]
     stride = network_param["stride"]
 
     # memory node id
@@ -97,19 +104,21 @@ def calFitness(for_list, act_wgt_dict, out_dict, parallel_dim_list, partition_li
     #print(route_table)
 
 
+    # runtimeLA = LA
     runtimeP = PP3*P3*PP2*P2*P1
     runtimeQ = PQ3*Q3*PQ2*Q2*Q1
     runtimeK = PK3*K3*PK2*K2*K1*PK0
     runtimeC = PC3*C3*PC2*C2*C1*PC0
     runtimeR = R # R S不拆分,在PE level的时序for参数里
     runtimeS = S
-    runtimeCoreNum = PK2*PQ2*PP2*PC2
-    runtimeChipNum = PP3*PQ3*PK3*PC3
+    runtimeCoreNum = PK2*PQ2*PP2*PC2*PLA2
+    runtimeChipNum = PP3*PQ3*PK3*PC3*PLA3
 
     assert(runtimeP>=P);assert(runtimeQ>=Q);assert(runtimeK>=K);assert(runtimeC>=C)
     assert(runtimeCoreNum <= CoreNum);assert(runtimeChipNum <= ChipNum)
 
-    energy_MAC = P*Q*K*C*R*S * MAC_energy_ratio
+    energy_MAC = LA*P*Q*K*C*R*S * MAC_energy_ratio
+    # compuation_num = runtimeLA*runtimeP*runtimeQ*runtimeK*runtimeC*runtimeR*runtimeS
     compuation_num = runtimeP*runtimeQ*runtimeK*runtimeC*runtimeR*runtimeS
     compuation_cycles = compuation_num/runtimeCoreNum/runtimeChipNum/PC0/PK0
     #print ("compuation_num=",compuation_num)
@@ -134,11 +143,12 @@ def calFitness(for_list, act_wgt_dict, out_dict, parallel_dim_list, partition_li
 
     ol1_need = PK0; al1_need_CKpart= PC0; wl1_need = PK0*PC0; cal =1
     al1_need_Qpart = 1; al1_need_Ppart = 1; al1_need_Rpart = 1; al1_need_Spart = 1
+    al1_need_LApart = 1
     # ------------------ 计算6个buffer存储需求&每级for循环循环次数 ------------------
 
     for id in range(len(data_flow)):
         param = data_flow[id]
-        ol1_need = ol1_need * ol1_ratio[id] # 单位:neuron
+        ol1_need = ol1_need * ol1_ratio[id] # 单位:neuron 这里完成了和AL1计算类似的过程，AL1单独拎出来是因为stride的存在
 
         # al1 need calculation
         if "K" == param[0] or "C" == param[0]:
@@ -151,10 +161,12 @@ def calFitness(for_list, act_wgt_dict, out_dict, parallel_dim_list, partition_li
             al1_need_Rpart = al1_need_Rpart * all_param[id]
         elif "S" == param[0]:
             al1_need_Spart = al1_need_Spart * all_param[id]
+        elif "LA" == param[0]:
+            al1_need_LApart = al1_need_LApart * all_param[id]
 
         al1_need_Q_final = al1_need_Qpart * stride + al1_need_Spart - stride
         al1_need_P_final = al1_need_Ppart * stride + al1_need_Rpart - stride
-        al1_need = al1_need_CKpart * al1_need_Q_final * al1_need_P_final
+        al1_need = al1_need_LApart * al1_need_CKpart * al1_need_Q_final * al1_need_P_final
 
         
         wl1_need = wl1_need * wl1_ratio[id]
@@ -166,15 +178,15 @@ def calFitness(for_list, act_wgt_dict, out_dict, parallel_dim_list, partition_li
         L1_need[param] = wl1_need + al1_need + ol1_need
         if_out_final[param] = out_final[id]
         # L2
-        OL2_need[param] = ol1_need * PK2 * PQ2 * PP2
-        al2_need_Qpart = al1_need_Qpart * PQ2 
+        OL2_need[param] = ol1_need * PK2 * PQ2 * PP2 * PLA2
+        al2_need_Qpart = al1_need_Qpart * PQ2
         al2_need_Ppart = al1_need_Ppart * PP2
         al2_need_Q_final = al2_need_Qpart * stride + al2_need_Qpart - stride
         al2_need_P_final = al2_need_Ppart * stride + al2_need_Ppart - stride
-        al2_need = al1_need_CKpart * al2_need_Qpart * al2_need_Ppart * PC2 #wxy add new , 不确定正不正确
+        al2_need = al1_need_CKpart * al2_need_Qpart * al2_need_Ppart * PC2 * PLA2 #wxy add new , 不确定正不正确
         
         AL2_need[param] = al2_need #这里有点问题
-        WL2_need[param] = wl1_need * PK2  * PC2
+        WL2_need[param] = wl1_need * PK2  * PC2 * PLA2
 
     repeat = 1
     repeat_num = {}

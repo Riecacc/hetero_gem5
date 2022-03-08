@@ -215,7 +215,7 @@ class GaEncode:
 		parallel_dim_set = []
 		for i in range(4):
 			dim_num = dim_list[i]
-			size_i.append(self.size[dim_num])
+			size_i.append(self.size[dim_num]) #P Q C K 的维度
 
 		#---并行度拆分（空间并行）---
 		if Par_type == 4:
@@ -630,6 +630,7 @@ class GaEncode:
 		return rd_out_PE_dict, wr_out_PE_dict, rd_out_Chiplet_dict, wr_out_Chiplet_dict
 
 	# 解析parse，得到对应的输出
+	# 输出格式
 	def parseChange(self, parse):
 		data_flow = []
 		data_flow_dim = []
@@ -815,13 +816,13 @@ class GaEncode:
 		for_list = {}
 
 		act_wgt_dict = {}
-		for_list[0], for_list[1], for_list[2], for_list[3], for_list[4], for_list[5], for_list[6], for_list[7], for_list[8], for_list[9], act_wgt_dict["act_core"], act_wgt_dict["wgt_core"], act_wgt_dict["act_chiplet"], act_wgt_dict["wgt_chiplet"], parallel_dim_list = self.parseChange(parse)
+		for_list[0], for_list[1], for_list[2], for_list[3], for_list[4], for_list[5], for_list[6], for_list[7], for_list[8], for_list[9], act_wgt_dict["act_core"], act_wgt_dict["wgt_core"], act_wgt_dict["act_chiplet"], act_wgt_dict["wgt_chiplet"],  = self.parseChange(parse)
 
 		out_dict = {}
 		out_dict["rd_core"], out_dict["wr_core"], out_dict["rd_chip"], out_dict["wr_chip"] = self.getOutputDict()
 		
 		
-		return for_list, act_wgt_dict, out_dict, parallel_dim_list, partition_list
+		return for_list, act_wgt_dict, out_dict, , partition_list
 
 if __name__ == '__main__':
 	network_param = {"P":224,"Q":224,"C":4,"K":64,"R":3,"S":3}
